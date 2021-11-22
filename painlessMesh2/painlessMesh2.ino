@@ -71,9 +71,9 @@ void receivedCallback(uint32_t from, String &msg){
   Serial.print("Node: ");
   Serial.println(node);
   Serial.print("Latitude: ");
-  Serial.println(latitude);
+  Serial.println(latitude, 6);
   Serial.print("Longitude: ");
-  Serial.println(longitude);
+  Serial.println(longitude, 6);
   Serial.print("Altitude: ");
   Serial.println(altitude);
   long rssi = WiFi.RSSI();
