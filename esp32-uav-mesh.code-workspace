@@ -1,0 +1,18 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			// Sender node codes
+			"name": "senderNode",
+			"path": "senderNode"
+		},
+		{
+			// Receiver node codes
+			"name": "receiverNode",
+			"path": "receiverNode"
+		}
+	],
+	"settings": {}
+}
