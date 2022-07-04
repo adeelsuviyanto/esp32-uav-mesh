@@ -1,93 +1,127 @@
 /*
- * ESP32-based Inter-UAV Communications System
- * Muhammad Adeel Mahdi Suviyanto
- * Telkom University
- * 
- * Receiver Node
- * 
- * Version 0.1, 2021-11-19
- * Node 2 (receiver)
- */
-
-
-#include "painlessMesh.h"
+  * ESP32-based Inter-UAV Communications System
+  * Muhammad Adeel Mahdi Suviyanto
+  * Telkom University
+  * 
+  * 2nd receiver implementation, new algorithm
+  * 
+  * Version 0.2, 2021-11-28
+  * Node 2 (receiver)
+*/
+#include <Arduino.h>
 #include <Arduino_JSON.h>
+#include "painlessMesh.h"
 #include <WiFi.h>
+#include <TaskScheduler.h>
+#include <TaskSchedulerDeclarations.h>
 
-//Mesh details
-#define MESH_PREFIX "UAV" //name of mesh
-#define MESH_PASS "12345678" //mesh password
+//Mesh settings
+#define MESH_PREFIX "UAV"
+#define MESH_PASS "12345678"
 #define MESH_PORT 5555
 
 //Node number for current board
 int nodeNumber = 2;
 
-//Data string to send
-//String locationData;
-
 //Declarations
 Scheduler userScheduler;
 painlessMesh mesh;
-void sendMessage();
-//String getLocation();
+int i = 0;
 
-//Placeholder data, to clear later and replace const float to float
-//const float currentLatitude = -6.97689;
-//const float currentLongitude = 107.62975;
-//const float currentAltitude = 30.00000;
+int error;
+double currentLatitude;
+double currentLongitude;
+double currentAltitude;
+int currentSatellites;
+int currentGPSDate;
+int currentGPSTime;
 
-//Send repetitively via Task Scheduler
-//Task taskSendMessage(TASK_SECOND * 10, TASK_FOREVER, &sendMessage);
+//Functions
+void requestLocation();
+void queryNodeType();
+void acknowledge();
 
-//Get Location Data from GPS board (NOT YET IMPLEMENTED, USING PLACEHOLDER DATA)
-/*String getLocation(){
-  JSONVar jsonReadings;
-  jsonReadings["node"] = nodeNumber;
-  jsonReadings["latitude"] = currentLatitude;
-  jsonReadings["longitude"] = currentLongitude;
-  jsonReadings["altitude"] = currentAltitude;
-  locationData = JSON.stringify(jsonReadings);
-  return locationData;
-}*/
+struct{
+  uint32_t senderNodeId;
+  boolean gpsReady = false;
+}senderNodes;
 
-void sendMessage(uint32_t senderNodeId){
-  String msg = "OK - Received Location Data from ";
-  msg = msg + senderNodeId;
-  mesh.sendBroadcast(msg);
+Task taskReqQuery( TASK_SECOND * 10, TASK_FOREVER, &requestLocation);
+Task taskReqLocation( 5000, -1, &requestLocation);
+
+void requestLocation(uint32_t toNode){
+  String msg = "reqLocation";
+  mesh.sendSingle(toNode, msg);
 }
 
-//painlessMesh serial outputs
-/*void receivedCallback(uint32_t from, String &msg){
-  Serial.printf("Message from %u msg=%s\n", from, msg.c_str());
-  
-}*/
-void receivedCallback(uint32_t from, String &msg){
-  Serial.printf("Message from %u msg=%s\n", from, msg.c_str());
-  JSONVar myObject = JSON.parse(msg.c_str());
-  int node = myObject["node"];
-  double latitude = myObject["latitude"];
-  double longitude = myObject["longitude"];
-  double altitude = myObject["altitude"];
-  Serial.print("Node: ");
-  Serial.println(node);
-  Serial.print("Latitude: ");
-  Serial.println(latitude, 6);
-  Serial.print("Longitude: ");
-  Serial.println(longitude, 6);
-  Serial.print("Altitude: ");
-  Serial.println(altitude);
-  long rssi = WiFi.RSSI();
-  Serial.print("RSSI: ");
-  Serial.println(rssi);
-  sendMessage(from);
+void queryNodeType(uint32_t toNode){
+  String msg = "getType";
+  mesh.sendSingle(toNode, msg);
+}
+
+void acknowledge(uint32_t toNode){
+  String msg = "OK Location Data received from ";
+  msg = msg + toNode;
+  mesh.sendSingle(toNode, msg);
 }
 
 void newConnectionCallback(uint32_t nodeId){
   Serial.printf("New Connection, nodeId = %u\n", nodeId);
+  queryNodeType(nodeId);
 }
+
+void receivedCallback(uint32_t from, String &msg){
+  //JSONVar recObj = JSON.parse(msg.c_str()); //parse JSON string to objects
+   DynamicJsonDocument JsonDocument(1024 + msg.length());
+   deserializeJson(JsonDocument, msg);
+   JsonObject recObj = JsonDocument.as<JsonObject>();
+   long rssi = WiFi.RSSI();
+  if(recObj.containsKey("nodeType")){ //check if sender node sent "sender" after query node type
+    String nodeType = recObj["nodeType"];
+    if(nodeType == "sender"){
+      senderNodes.senderNodeId = from;
+      if(taskReqQuery.isEnabled() == false) taskReqQuery.enable();
+    }
+    Serial.printf("Added node %u to sender nodes", from);
+    Serial.printf("RSSI: ");
+    Serial.println(rssi);
+  }
+  if(recObj.containsKey("locationReady")){
+    boolean locationReady = recObj["locationReady"];
+    if(locationReady == true && taskReqQuery.isEnabled() == true){
+      senderNodes.gpsReady = true;
+      taskReqQuery.disable();
+      taskReqLocation.enable();
+    }
+    else senderNodes.gpsReady = false;
+    Serial.printf("Sender GPS ready: %s", senderNodes.gpsReady ? "true" : "false");
+  }
+  else{
+    Serial.printf("Message from %u msg=%s\n", from, msg.c_str());
+    if(senderNodes.gpsReady == true){
+      int node;
+      double latitude;
+      double longitude;
+      double altitude;
+      int satellites;
+      node = recObj["node"];
+      Serial.println(node);
+      latitude = recObj["latitude"];
+      Serial.println(latitude, 6);
+      longitude = recObj["longitude"];
+      Serial.println(longitude, 6);
+      altitude = recObj["altitude"];
+      Serial.println(altitude);
+      satellites = recObj["satellites"];
+      acknowledge(from);
+    }
+  }
+}
+
 void changedConnectionCallback() {
   Serial.printf("Changed connections\n");
 }
+
 void nodeTimeAdjustedCallback(int32_t offset) {
   Serial.printf("Adjusted time %u. Offset = %d\n", mesh.getNodeTime(),offset);
 }
@@ -95,15 +129,16 @@ void nodeTimeAdjustedCallback(int32_t offset) {
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
-  mesh.setDebugMsgTypes( ERROR | STARTUP );
-  mesh.init( MESH_PREFIX, MESH_PASS, &userScheduler, MESH_PORT );
+  mesh.setDebugMsgTypes (ERROR | STARTUP | CONNECTION);
+  mesh.init(MESH_PREFIX, MESH_PASS, MESH_PORT);
   mesh.onReceive(&receivedCallback);
   mesh.onNewConnection(&newConnectionCallback);
   mesh.onChangedConnections(&changedConnectionCallback);
   mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
-
-  //userScheduler.addTask(taskSendMessage);
-  //taskSendMessage.enable();
+  
+  userScheduler.addTask(taskReqQuery);
+  userScheduler.addTask(taskReqLocation);
+  //taskReqQuery.enable();
 
 }
 

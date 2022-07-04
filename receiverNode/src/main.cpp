@@ -48,6 +48,9 @@ unsigned long timing;
 struct{
   uint32_t senderNodeId;
   boolean gpsReady = false;
+  uint8_t retryCounter;
+  uint16_t sentPingCounter;
+  uint16_t receivedPingCounter;
 }senderNodes;
 uint32_t destNode;
 
@@ -55,9 +58,9 @@ void requestLocation();
 void queryGPSStatus();
 void queryNodeType();
 
-Task taskReqQuery(TASK_SECOND * 10, -1, &queryGPSStatus );
+Task taskReqQuery(TASK_SECOND * 20, -1, &queryGPSStatus );
 Task taskQueryNode(TASK_SECOND * 5, -1, &queryNodeType );
-Task taskReqLocation(TASK_SECOND * 5, -1, &requestLocation );
+Task taskReqLocation(TASK_SECOND * 10, -1, &requestLocation );
 
 void requestLocation(){
   if(taskReqQuery.isEnabled() == true) taskReqQuery.disable();
@@ -73,6 +76,12 @@ void queryGPSStatus(){
   String msg = "gpsStatus";
   mesh.sendSingle(senderNodes.senderNodeId, msg);
   Serial.printf("\nWiFi RSSI value: %li dBm", rssi);
+  senderNodes.retryCounter++;
+
+  //Disable query if no reply from sender for 5 requests
+  if(senderNodes.retryCounter >= 5){
+    taskReqQuery.disable();
+  }
 }
 
 void queryNodeType(){
@@ -107,13 +116,16 @@ void newConnectionCallback(uint32_t nodeId){
 void receivedCallback(uint32_t from, String &msg){
   Serial.printf("\nMessage from %u msg=%s\n", from, msg.c_str());
   long int senderRSSI;
-  //JSONVar recObj = JSON.parse(msg.c_str()); //parse JSON string to objects
+  //JSONVar recObj = JSON.parse(msg.c_str()); 
+  
+  //parse JSON string to objects
   DynamicJsonDocument JsonDocument(1024 + msg.length());
   JsonDocument.clear();
   deserializeJson(JsonDocument, msg);
   JsonObject recObj = JsonDocument.as<JsonObject>();
   senderRSSI = recObj["rssi"];
   Serial.printf("\nClient-side RSSI: %li dBm\n", senderRSSI);
+
   if(recObj.containsKey("nodeType")){ //check if sender node sent "sender" after query node type
     String nodeType = recObj["nodeType"];
     if(nodeType.equals("sender") == true){
@@ -126,6 +138,9 @@ void receivedCallback(uint32_t from, String &msg){
     Serial.printf("\nAdded node %u to sender nodes", from);
   }
   if(recObj.containsKey("locationReady")){
+    //Reset retry counter to 0
+    senderNodes.retryCounter = 0;
+
     uint8_t locationReady = recObj["locationReady"];
     if(locationReady == 1){
       senderNodes.gpsReady = true;
@@ -173,6 +188,20 @@ void nodeTimeAdjustedCallback(int32_t offset) {
   Serial.printf("Adjusted time %u. Offset = %d\n", mesh.getNodeTime(),offset);
 }
 
+void nodeTripDelay(uint32_t nodeId, int32_t delay){
+  Serial.printf("\nTrip delay measurement from %u: %i ms, %i us", nodeId, delay/1000, delay);
+  senderNodes.receivedPingCounter++;
+}
+
+void packetLossTest(unsigned long timeDelay) {
+  unsigned long currentTime = millis();
+  if(millis() >= currentTime + timeDelay){
+    mesh.startDelayMeas(senderNodes.senderNodeId);
+    senderNodes.sentPingCounter++;
+  }
+  
+}
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
@@ -184,6 +213,7 @@ void setup() {
   mesh.onNewConnection(&newConnectionCallback);
   mesh.onChangedConnections(&changedConnectionCallback);
   mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+  mesh.onNodeDelayReceived(&nodeTripDelay);
   
   userScheduler.addTask(taskQueryNode);
   userScheduler.addTask(taskReqQuery);
@@ -198,6 +228,28 @@ void loop() {
   mesh.update();
   userScheduler.execute();
   rssi = WiFi.RSSI();
+  if(Serial.available()){
+    String command = Serial.readStringUntil('\n');
+
+    if (command == "ping"){
+      senderNodes.sentPingCounter = 0;
+      senderNodes.receivedPingCounter = 0;
+      mesh.startDelayMeas(senderNodes.senderNodeId);
+      Serial.printf("\nStarting trip delay measurement to NodeId %u", senderNodes.senderNodeId);
+      senderNodes.sentPingCounter++;
+    }
+
+    if (command == "packet-loss-test"){
+      Serial.printf("\nSpecify time delay in seconds for ping on serial input");
+      int timeDelay = Serial.parseInt();
+      while(command != "stop-test"){
+        packetLossTest(timeDelay * 1000);
+      }
+      float packetSuccess = senderNodes.receivedPingCounter / senderNodes.sentPingCounter * 100;
+      float packetLoss = 100 - packetSuccess;
+      Serial.printf("\nSuccessful ping %f percent, Packet loss %f percent", packetSuccess, packetLoss);
+    }
+  }
   //Serial.printf("\ntaskQueryNode %s", taskQueryNode.isEnabled() ? "true" : "false");
   //Serial.printf("\ntaskReqQuery %s", taskReqQuery.isEnabled() ? "true" : "false");
 }
