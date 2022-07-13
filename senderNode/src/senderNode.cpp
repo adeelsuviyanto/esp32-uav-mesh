@@ -3,9 +3,9 @@
  * Muhammad Adeel Mahdi Suviyanto
  * Telkom University
  * 
- * 3rd GPS implementation, replace algorithm
+ * 4th GPS implementation, adjusted some flags
  * 
- * Version 1.0, 2021-12-04
+ * Version 2.0, 2021-07-06
  * 
  * Node 1
  */
@@ -22,6 +22,9 @@
 #define MESH_PREFIX "UAV" //name of mesh
 #define MESH_PASS "12345678" //mesh password
 #define MESH_PORT 5555
+
+//Board details
+#define ledRed 9 //cek lagi nanti gimana enaknya posisiin LED-nya
 
 //Node number for current board
 int nodeNumber = 1;
@@ -92,8 +95,8 @@ void replyGPSQuery(uint32_t toNode){
     Serial.println("Sending GPS Status Query");
     String msg;
     DynamicJsonDocument reply(1024);
-    if(currentSatellites < 3 || (currentLatitude == 0 && currentLongitude == 0 && currentAltitude == 0)) reply["locationReady"] = 0;
-    else reply["locationReady"] = 1;
+    if(currentSatellites < 3 || (currentLatitude == 0 && currentLongitude == 0 && currentAltitude == 0)) reply["locationReady"] = 0; //Set locationReady flag to 0 if location data is not ready
+    else reply["locationReady"] = 1; //Or else, send locationReady flag set to 1.
     reply["rssi"] = rssi;
     serializeJson(reply, msg);
     mesh.sendSingle(toNode, msg);
@@ -134,6 +137,9 @@ void setup(){
     mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);  
     userScheduler.addTask(taskShowGPSData);
     taskShowGPSData.enable();  
+
+    //LED Status setup
+    pinMode(ledRed, OUTPUT); //Entar dicek lagi
 }
 
 void loop(){
@@ -145,6 +151,7 @@ void loop(){
     if(millis() > 5000 && gps.charsProcessed() < 10){
         Serial.println("Error: No GPS data received. Check wiring and reset.");
         Serial.println("Board will now dump GPS stream: ");
+        digitalWrite(ledRed, HIGH);
         while(true)
         if(ss.available() > 0) {
             Serial.write(ss.read());
