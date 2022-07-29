@@ -228,28 +228,6 @@ void loop() {
   mesh.update();
   userScheduler.execute();
   rssi = WiFi.RSSI();
-  if(Serial.available()){
-    String command = Serial.readStringUntil('\n');
-
-    if (command == "ping"){
-      senderNodes.sentPingCounter = 0;
-      senderNodes.receivedPingCounter = 0;
-      mesh.startDelayMeas(senderNodes.senderNodeId);
-      Serial.printf("\nStarting trip delay measurement to NodeId %u", senderNodes.senderNodeId);
-      senderNodes.sentPingCounter++;
-    }
-
-    if (command == "packet-loss-test"){
-      Serial.printf("\nSpecify time delay in seconds for ping on serial input");
-      int timeDelay = Serial.parseInt();
-      while(command != "stop-test"){
-        packetLossTest(timeDelay * 1000);
-      }
-      float packetSuccess = senderNodes.receivedPingCounter / senderNodes.sentPingCounter * 100;
-      float packetLoss = 100 - packetSuccess;
-      Serial.printf("\nSuccessful ping %f percent, Packet loss %f percent", packetSuccess, packetLoss);
-    }
-  }
   //Serial.printf("\ntaskQueryNode %s", taskQueryNode.isEnabled() ? "true" : "false");
   //Serial.printf("\ntaskReqQuery %s", taskReqQuery.isEnabled() ? "true" : "false");
 }

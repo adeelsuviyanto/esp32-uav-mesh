@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "senderNode"
+		},
+		{
+			"name": "receiverNode",
+			"path": "receiverNode"
+		}
+	],
+	"settings": {}
+}
