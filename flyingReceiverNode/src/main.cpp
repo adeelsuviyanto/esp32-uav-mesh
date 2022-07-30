@@ -138,6 +138,24 @@ void sendLocationReq(){
   if(GPSQuery.isEnabled() == true) GPSQuery.disable(); // Disables GPS status query, as sender should report GPS status as ready, thus receiver starts location request
 
   Serial.println("Requesting location data from sender node...");
+
+  String msg;
+
+  DynamicJsonDocument JsonDocument(1024);
+  JsonObject query = JsonDocument.to<JsonObject>();
+  timestampRXTX = mesh.getNodeTime();
+  query["type"] = 3; //Messages with type 3 are for location requests
+  query["timestamp"] = timestampRXTX;
+  serializeJson(query, msg);
+
+  mesh.sendSingle(senderNodes.senderNodeId, msg);
+
+  Serial.println("Sent location request. Timestamp is ");
+  Serial.print(timestampRXTX);
+}
+
+void sendPingTest(){
+
 }
 
 void setup() {
