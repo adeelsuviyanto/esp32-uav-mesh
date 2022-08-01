@@ -13,6 +13,7 @@
 #include <esp_wifi.h>
 #include <WiFi.h>
 #include <TaskScheduler.h>
+#include <ArduinoJson.h>
 
 
 // Mesh settings
@@ -49,6 +50,7 @@ struct{
   uint8_t receivedPingCounter;
 } senderNodes;
 
+int rssi;
 uint32_t destinationNode;
 uint32_t timestampRXTX; // stores timestamp for messages sent from receiver node to GPS sender node
 uint32_t timestampTXRX; // stores timestamp for messages received from GPS sender node to receiver node
@@ -64,8 +66,11 @@ void sendPingTest();
 
 // Receive functions
 void receivedLocation();
-void receivedGPSQuery();
-void receivedNodeQuery();
+void receivedGPSQuery(bool GPSStatus);
+void receivedNodeQuery(bool nodeType, int from);
+
+// Print data to MicroSD
+void storeData();
 
 // Mesh callbacks
 void receivedCallback(uint32_t from, String &msg);
@@ -87,7 +92,6 @@ Task locationReq(TASK_SECOND * 10, -1, &sendLocationReq);
 // This query is to determine a new node's type, whether or not it is a GPS sender node.
 void sendNodeQuery(){
   Serial.println("Querying node type...");
-
   // Initialize message string
   String msg;
   
@@ -155,7 +159,110 @@ void sendLocationReq(){
 }
 
 void sendPingTest(){
+  Serial.println("Sending ping test...");
+  mesh.startDelayMeas(senderNodes.senderNodeId);
+  senderNodes.sentPingCounter++;
+}
 
+void nodeTripDelay(uint32_t nodeId, int32_t delay){
+  Serial.println("Round-trip delay: ");
+  Serial.print(delay);
+  senderNodes.receivedPingCounter++;
+
+  if(senderNodes.sentPingCounter < 10) sendPingTest();
+}
+
+void newConnectionCallback(uint32_t nodeId){
+  Serial.printf("New Connection, nodeId = %u\n", nodeId);
+  destinationNode = nodeId;
+
+  if(nodeQuery.isEnabled() == false){
+    nodeQuery.enable();
+  }
+  else sendNodeQuery();
+}
+
+void receivedCallback(uint32_t from, String &msg){
+  Serial.printf("\nMessage from %u msg = %s\n", from, msg.c_str());
+  long int senderRSSI;
+
+  // Parsing JSON messages to JSON objects
+  DynamicJsonDocument JsonDocument(1024 + msg.length());
+  JsonDocument.clear();
+  // Deserialize JSON message to extract keys and values
+  deserializeJson(JsonDocument, msg);
+  JsonObject receivedMsg = JsonDocument.as<JsonObject>();
+
+  // Measure message size
+  int msgSize;
+  msgSize = sizeof(msg);
+
+  // Get RSSI value from sender node
+  senderRSSI = receivedMsg["rssi"];
+  Serial.println("Sender-side RSSI: ");
+  Serial.print(senderRSSI);
+
+  // Message type corresponds with the query type, thus 1 is node type query, 2 is GPS status query, 3 is location requests
+  uint8_t type = receivedMsg["type"];
+
+  // Store timestamps
+  timestampTXRX = receivedMsg["timestamp"];
+  timestampDelta = mesh.getNodeTime() - timestampTXRX;
+  
+  // Calculate incidental speed of transmission (throughput)
+  uint32_t deltaSeconds = timestampDelta / 1000000;
+  uint16_t throughput = msgSize / deltaSeconds;
+  Serial.println("Throughput: ");
+  Serial.print(throughput);
+  Serial.print(" bps");
+
+  // If received message with type 1, go to receivedNodeQuery();
+  if(type == 1){
+    bool nodeType = receivedMsg["nodeType"];
+    receivedNodeQuery(nodeType, from);
+  }
+  if(type == 2){
+    bool GPSStatus = receivedMsg["locationReady"];
+    receivedGPSQuery(GPSStatus);
+  }
+  if(type == 3){
+    if(nodeQuery.isEnabled() == true) nodeQuery.disable();
+    senderNodes.latitude = receivedMsg["latitude"];
+    senderNodes.longitude = receivedMsg["longitude"];
+    senderNodes.altitude = receivedMsg["altitude"];
+    senderNodes.satellite = receivedMsg["satellites"];
+    Serial.printf("lat %f, lon %f, alt %f, sat %i", senderNodes.latitude, senderNodes.longitude, senderNodes.altitude, senderNodes.satellite);
+  }
+  JsonDocument.clear();
+}
+
+void receivedNodeQuery(bool nodeType, int from){
+  if(nodeType == true){
+    senderNodes.senderNodeId = from;
+    Serial.printf("Sender Node ID recorded, %u", senderNodes.senderNodeId);
+    GPSQuery.enable();
+  }
+  else return;
+}
+
+void receivedGPSQuery(bool GPSStatus){
+  if(GPSStatus == true){
+    nodeQuery.disable();
+    senderNodes.gpsReady = true;
+    locationReq.enable();
+    Serial.println("Sender Node reports GPS system is ready. Commencing location data request..");
+  }
+  else return;
+}
+
+void changedConnectionCallback(){
+  Serial.printf("Changed connections\n");
+  if(nodeQuery.isEnabled() == false) nodeQuery.enable();
+  else sendNodeQuery();
+}
+
+void nodeTimeAdjustedCallback(int32_t offset){
+  Serial.printf("Adjusted time %u. Offset = %d\n", mesh.getNodeTime(),offset);  
 }
 
 void setup() {
@@ -176,5 +283,7 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  mesh.update();
+  userScheduler.execute();
+  rssi = WiFi.RSSI();
 }
