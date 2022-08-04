@@ -51,18 +51,24 @@ int currentGPSDate;
 int currentGPSTime;
 uint32_t receiverNode;
 long rssi;
+uint32_t timestampRXTX;
+uint32_t timestampTXRX;
+uint32_t timestampDelta;
 
 void showGPSData();
 Task taskShowGPSData(TASK_SECOND, -1, &showGPSData);
 
 void getLocation(uint32_t toNode){
+    timestampTXRX = mesh.getNodeTime();
     locationData = "";
     Serial.println("Sending Location Data");
     DynamicJsonDocument locDat(1024);
+    locDat["type"] = 3;
     locDat["latitude"] = currentLatitude;
     locDat["longitude"] = currentLongitude;
     locDat["altitude"] = currentAltitude;
     locDat["satellites"] = currentSatellites;
+    locDat["timestamp"] = timestampTXRX;
     locDat["rssi"] = rssi;
     serializeJson(locDat, locationData);
     mesh.sendSingle(receiverNode, locationData);
@@ -84,7 +90,10 @@ void replyNodeQuery(uint32_t toNode){
     String msg;
     DynamicJsonDocument JsonDocument(1024);
     JsonObject reply = JsonDocument.to<JsonObject>();
-    reply["nodeType"] = "sender";
+
+    reply["type"] = 1;
+    reply["timestamp"] = timestampTXRX;
+    reply["nodeType"] = 1;
     reply["rssi"] = rssi;
     serializeJson(reply, msg);
     mesh.sendSingle(toNode, msg);
@@ -92,11 +101,19 @@ void replyNodeQuery(uint32_t toNode){
 }
 
 void replyGPSQuery(uint32_t toNode){
+    timestampTXRX = mesh.getNodeTime();
     Serial.println("Sending GPS Status Query");
     String msg;
     DynamicJsonDocument reply(1024);
-    if(currentSatellites < 3 || (currentLatitude == 0 && currentLongitude == 0 && currentAltitude == 0)) reply["locationReady"] = 0; //Set locationReady flag to 0 if location data is not ready
-    else reply["locationReady"] = 1; //Or else, send locationReady flag set to 1.
+    reply["type"] = 2;
+
+    // Logic check, if GPS is ready then send locationReady = 1
+    //if(currentSatellites < 3 || (currentLatitude == 0 && currentLongitude == 0 && currentAltitude == 0)) reply["locationReady"] = 0; //Set locationReady flag to 0 if location data is not ready
+    //else reply["locationReady"] = 1; // Or else, send locationReady flag set to 1.
+    // Disabled for testing, comment out the line below to reenable logic check
+    reply["locationReady"] = 1;
+
+    reply["timestamp"] = timestampTXRX;
     reply["rssi"] = rssi;
     serializeJson(reply, msg);
     mesh.sendSingle(toNode, msg);
@@ -118,10 +135,21 @@ void nodeTimeAdjustedCallback(int32_t offset) {
 }
 
 void receivedCallback(uint32_t from, String &msg){
+    int timestampReceived = mesh.getNodeTime();
     Serial.printf("Message from %u msg=%s\n", from, msg.c_str());
-    if (strcmp(msg.c_str(), "getType") == 0) replyNodeQuery(from);
-    if (strcmp(msg.c_str(), "gpsStatus") == 0) replyGPSQuery(from);
-    if (strcmp(msg.c_str(), "reqLocation") == 0) getLocation(from);
+
+    // Parsing JSON messages to JSON objects
+    DynamicJsonDocument JsonDocument(1024 + msg.length());
+    JsonDocument.clear();
+    deserializeJson(JsonDocument, msg);
+    JsonObject receivedMsg = JsonDocument.as<JsonObject>();
+
+    uint8_t type = receivedMsg["type"];
+    uint8_t timestampTXRX = receivedMsg["timestamp"];
+
+    if (type == 1) replyNodeQuery(from);
+    if (type == 2) replyGPSQuery(from);
+    if (type == 3) getLocation(from);
 }
 
 void setup(){
@@ -129,8 +157,8 @@ void setup(){
     ss.begin(GPSBaud);
     mesh.setDebugMsgTypes( ERROR | STARTUP | CONNECTION);
     mesh.init(MESH_PREFIX, MESH_PASS, MESH_PORT);
-    esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_LR);
-    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR);
+    esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11N);
+    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11N);
     mesh.onReceive(&receivedCallback);
     mesh.onNewConnection(&newConnectionCallback);
     mesh.onChangedConnections(&changedConnectionCallback);
