@@ -180,7 +180,7 @@ void sendPingTest(){
   mesh.startDelayMeas(senderNodes.senderNodeId);
   senderNodes.sentPingCounter++;
   if(senderNodes.sentPingCounter % 10 == 0 && senderNodes.sentPingCounter != 0){
-    float packetLoss = senderNodes.receivedPingCounter / senderNodes.sentPingCounter;
+    float packetLoss = float(senderNodes.receivedPingCounter) / senderNodes.sentPingCounter;
     snprintf(buffer, sizeof(buffer), "%f percent packet loss\n", (1.0 - packetLoss) * 100.0);
     appendFile(SD, "/packetLoss.txt", buffer);
   }
