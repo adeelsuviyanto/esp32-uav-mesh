@@ -53,9 +53,10 @@ struct{
   // Node data and network parameters
   uint32_t senderNodeId;
   uint8_t retryCounter;
-  uint8_t sentPingCounter;
-  uint8_t receivedPingCounter;
+  uint16_t sentPingCounter;
+  uint16_t receivedPingCounter;
   uint8_t gpsReceivedCounter;
+  int8_t senderRSSI;
 } senderNodes;
 
 uint32_t destinationNode;
@@ -88,6 +89,7 @@ void newConnectionCallback(uint32_t nodeId);
 void changedConnectionCallback();
 void nodeTimeAdjustedCallback(int32_t offset);
 void nodeTripDelay(uint32_t nodeId, int32_t delay);
+void droppedConnectionCallback(uint32_t nodedId);
 
 // SD Card functions
 void appendFile(fs::FS &fs, const char * path, const char * message);
@@ -97,7 +99,7 @@ void writeFile(fs::FS &fs, const char * path, const char * message);
 Task GPSQuery(TASK_SECOND *20, -1, &sendGPSQuery);
 Task nodeQuery(TASK_SECOND * 5, -1, &sendNodeQuery);
 Task locationReq(TASK_SECOND * 2, -1, &sendLocationReq);
-Task pingTest(TASK_SECOND, -1, &sendPingTest);
+Task pingTest(TASK_SECOND * 4, -1, &sendPingTest);
 //Task packetLoss(TASK_SECOND, -1, &packetLossCounter);
 
 
@@ -171,6 +173,8 @@ void sendLocationReq(){
 
   Serial.println("Sent location request. Timestamp is ");
   Serial.print(timestampRXTX);
+  
+  sendPingTest();
 }
 
 void sendPingTest(){
@@ -179,10 +183,11 @@ void sendPingTest(){
   Serial.println("Sending ping test...");
   mesh.startDelayMeas(senderNodes.senderNodeId);
   senderNodes.sentPingCounter++;
-  if(senderNodes.sentPingCounter % 10 == 0 && senderNodes.sentPingCounter != 0){
+
+  if((senderNodes.sentPingCounter - senderNodes.receivedPingCounter) % 10 == 0){
     float packetLoss = float(senderNodes.receivedPingCounter) / senderNodes.sentPingCounter;
-    snprintf(buffer, sizeof(buffer), "%f percent packet loss\n", (1.0 - packetLoss) * 100.0);
-    appendFile(SD, "/packetLoss.txt", buffer);
+    snprintf(buffer, sizeof(buffer), "%lu,%f,%i,%i\n", millis(), (1.0 - packetLoss) * 100.0, senderNodes.senderRSSI, rssi);
+    appendFile(SD, "/packetLoss.csv", buffer);
   }
 }
 
@@ -191,12 +196,14 @@ void nodeTripDelay(uint32_t nodeId, int32_t delay){
   Serial.print(delay);
   senderNodes.receivedPingCounter++;
   Serial.printf("\n%i received ping counter, %i sent ping counter\n", senderNodes.receivedPingCounter, senderNodes.sentPingCounter);
-  snprintf(buffer, sizeof(buffer), "%i us, %i ms, %ld\n", delay, delay / 1000, millis());
-  appendFile(SD, "/delay.txt", buffer);
-}
+  snprintf(buffer, sizeof(buffer), "%lu,%i,%i,%i,%i\n", millis(), delay, delay / 1000, senderNodes.senderRSSI, rssi);
+  appendFile(SD, "/delay.csv", buffer);
 
-void packetLossCounter(){
-  
+  if(senderNodes.sentPingCounter % 10 == 0 && senderNodes.sentPingCounter != 0){
+    float packetLoss = float(senderNodes.receivedPingCounter) / senderNodes.sentPingCounter;
+    snprintf(buffer, sizeof(buffer), "%lu,%f,%i,%i\n", millis(), (1.0 - packetLoss) * 100.0, senderNodes.senderRSSI, rssi);
+    appendFile(SD, "/packetLoss.csv", buffer);
+  }
 }
 
 void newConnectionCallback(uint32_t nodeId){
@@ -213,7 +220,6 @@ void newConnectionCallback(uint32_t nodeId){
 void receivedCallback(uint32_t from, String &msg){
   uint32_t timestampReceived = mesh.getNodeTime();
   Serial.printf("\nMessage from %u msg = %s\n", from, msg.c_str());
-  uint8_t senderRSSI;
 
   // Parsing JSON messages to JSON objects
   DynamicJsonDocument JsonDocument(1024 + msg.length());
@@ -227,9 +233,9 @@ void receivedCallback(uint32_t from, String &msg){
   msgSize = sizeof(msg);
 
   // Get RSSI value from sender node
-  senderRSSI = receivedMsg["rssi"];
+  senderNodes.senderRSSI = receivedMsg["rssi"];
   Serial.println("Sender-side RSSI: ");
-  Serial.print(senderRSSI);
+  Serial.print(senderNodes.senderRSSI);
 
   // Message type corresponds with the query type, thus 1 is node type query, 2 is GPS status query, 3 is location requests
   uint8_t type = receivedMsg["type"];
@@ -247,8 +253,8 @@ void receivedCallback(uint32_t from, String &msg){
   Serial.println("Throughput: ");
   Serial.print(throughput, 6);
   Serial.print(" bps");
-  snprintf(buffer, sizeof(buffer), "%f B/s %ld %i dBm %i dBm\n", throughput, millis(), senderRSSI, rssi);
-  appendFile(SD, "/throughput.txt", buffer);
+  snprintf(buffer, sizeof(buffer), "%lu,%f,%i,%i\n", millis(), throughput, senderNodes.senderRSSI, rssi);
+  appendFile(SD, "/throughput.csv", buffer);
 
   // If received message with type 1, go to receivedNodeQuery();
   if(pingTest.isEnabled() == false){
@@ -268,8 +274,8 @@ void receivedCallback(uint32_t from, String &msg){
       senderNodes.satellite = receivedMsg["satellites"];
       Serial.printf("\nlat %f, lon %f, alt %f, sat %i", senderNodes.latitude, senderNodes.longitude, senderNodes.altitude, senderNodes.satellite);
       senderNodes.gpsReceivedCounter++;
-      snprintf(buffer, sizeof(buffer), "\n%f    %f    %f    %i", senderNodes.latitude, senderNodes.longitude, senderNodes.altitude, senderNodes.satellite);
-      appendFile(SD, "/location.txt", buffer);
+      snprintf(buffer, sizeof(buffer), "%lu,%f,%f,%f,%i,%i,%i\n", millis(), senderNodes.latitude, senderNodes.longitude, senderNodes.altitude, senderNodes.satellite, senderNodes.senderRSSI, rssi);
+      appendFile(SD, "/location.csv", buffer);
     }
   }
   JsonDocument.clear();
@@ -296,8 +302,20 @@ void receivedGPSQuery(bool GPSStatus){
 
 void changedConnectionCallback(){
   Serial.printf("Changed connections\n");
-  if(nodeQuery.isEnabled() == false) nodeQuery.enable();
-  else sendNodeQuery();
+  if(nodeQuery.isEnabled() == false && pingTest.isEnabled() == false){
+    nodeQuery.enable();
+  }
+  else if(pingTest.isEnabled() == false) sendNodeQuery();
+  else if(pingTest.isEnabled() == true) return;
+}
+
+void droppedConnectionCallback(uint32_t nodeId){
+  if(nodeId == senderNodes.senderNodeId){
+    snprintf(buffer, sizeof(buffer), "%lu, disconnected\n", millis());
+    appendFile(SD, "/throughput.csv", buffer);
+    appendFile(SD, "/delay.csv", buffer);
+    appendFile(SD, "/location.csv", buffer);
+  }
 }
 
 void nodeTimeAdjustedCallback(int32_t offset){
@@ -337,8 +355,8 @@ void setup() {
   mesh.init(MESH_PREFIX, MESH_PASS, MESH_PORT); // Initialize mesh
 
   // Set ESP32 802.11 Mode
-  esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11N);
-  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11N);
+  esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_LR);
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR);
 
   // Setup mesh callbacks
   mesh.onReceive(&receivedCallback);
@@ -346,13 +364,14 @@ void setup() {
   mesh.onChangedConnections(&changedConnectionCallback);
   mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
   mesh.onNodeDelayReceived(&nodeTripDelay);
+  mesh.onDroppedConnection(&droppedConnectionCallback);
 
   // Task scheduler tasks
   userScheduler.addTask(nodeQuery);
   userScheduler.addTask(GPSQuery);
   userScheduler.addTask(locationReq);
   userScheduler.enable();
-  userScheduler.addTask(pingTest);
+  //userScheduler.addTask(pingTest);  ====== Disabled as of 5 August 2022 to test concurrent testing sequence ======
   //userScheduler.addTask(packetLoss);
 
   // SD card initialization
@@ -366,15 +385,18 @@ void setup() {
   Serial.printf("SD Card size %lluMB\n", cardSize);
 
   // Initialize files
-  // Here we use append instead of write in order to prevent overwrites
-  appendFile(SD, "/throughput.txt", "Start throughput recording, timestamp in ms.\nThroughput Timestamp SenderRSSI ClientRSSI\n");
+  writeFile(SD, "/throughput.csv", "Timestamp,Throughput,Sender RSSI,Receiver RSSI\n");
 
-  // Debug code for SD
-  // Delete if necessary
-  writeFile(SD, "/timestamp.txt", "Start timestamp recording");
+  writeFile(SD, "/timestamp.txt", "Start timestamp recording in seconds\n");
 
   // Write new file for location data
-  writeFile(SD, "/location.txt", "Latitude    Longitude    Altitude    Satellite");
+  writeFile(SD, "/location.csv", "Timestamp,Latitude,Longitude,Altitude,Satellite,Sender RSSI, Receiver RSSI\n");
+
+  // Write new file for packet loss data
+  writeFile(SD, "/packetloss.csv", "Timestamp,Packet Loss,Sender RSSI,ReceiverRSSI\n");
+
+  // Write new file for round-trip delay data
+  writeFile(SD, "/delay.csv", "Timestamp,Round-trip delay in microseconds,Round-trip delay in milliseconds,Sender RSSI,Receiver RSSI\n");
 }
 
 void loop() {
@@ -388,11 +410,11 @@ void loop() {
     snprintf(buffer, sizeof(buffer), "%ld\n", millis()/1000);
     appendFile(SD, "/timestamp.txt", buffer);
   }
-  if(senderNodes.gpsReceivedCounter >= 10 && millis() >= 200000 && (pingTest.isEnabled() == false)){
+  /*if(senderNodes.gpsReceivedCounter >= 10 && millis() >= 200000 && (pingTest.isEnabled() == false)){
     nodeQuery.disable();
     locationReq.disable();
     GPSQuery.disable();
     pingTest.enable();
     //packetLoss.enable();
-  }
+  }*/ //====== Disabled as of 5 August 2022 to test concurrent testing sequence ======
 }
