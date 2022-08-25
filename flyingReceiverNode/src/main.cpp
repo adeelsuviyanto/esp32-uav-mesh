@@ -83,6 +83,9 @@ void storeData();
 // Counts packet loss
 void packetLossCounter();
 
+// Shows mesh topology
+void meshTopology();
+
 // Mesh callbacks
 void receivedCallback(uint32_t from, String &msg);
 void newConnectionCallback(uint32_t nodeId);
@@ -204,6 +207,13 @@ void nodeTripDelay(uint32_t nodeId, int32_t delay){
     snprintf(buffer, sizeof(buffer), "%lu,%f,%i,%i\n", millis(), (1.0 - packetLoss) * 100.0, senderNodes.senderRSSI, rssi);
     appendFile(SD, "/packetLoss.csv", buffer);
   }
+  
+  meshTopology();
+}
+
+void meshTopology(){
+  snprintf(buffer, sizeof(buffer), "%lu    %s\n", millis(), mesh.subConnectionJson().c_str());
+  appendFile(SD, "/meshTopology.txt", buffer);
 }
 
 void newConnectionCallback(uint32_t nodeId){
@@ -352,11 +362,11 @@ void appendFile(fs::FS &fs, const char * path, const char * message){
 void setup() {
   Serial.begin(115200);
   mesh.setDebugMsgTypes(ERROR|STARTUP|CONNECTION); // PainlessMesh debug messages, output to serial
-  mesh.init(MESH_PREFIX, MESH_PASS, MESH_PORT); // Initialize mesh
+  mesh.init(MESH_PREFIX, MESH_PASS, MESH_PORT, WIFI_MODE_APSTA, 6); // Initialize mesh
 
   // Set ESP32 802.11 Mode
-  esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_LR);
-  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR);
+  esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11N);
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11N);
 
   // Setup mesh callbacks
   mesh.onReceive(&receivedCallback);
@@ -397,6 +407,9 @@ void setup() {
 
   // Write new file for round-trip delay data
   writeFile(SD, "/delay.csv", "Timestamp,Round-trip delay in microseconds,Round-trip delay in milliseconds,Sender RSSI,Receiver RSSI\n");
+
+  // Write new file for topology data
+  writeFile(SD, "/meshTopology.txt", "Timestamp    Mesh Topology\n");
 }
 
 void loop() {
