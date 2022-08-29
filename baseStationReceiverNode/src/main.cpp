@@ -230,8 +230,8 @@ void setup() {
   mesh.init(MESH_PREFIX, MESH_PASS, MESH_PORT, WIFI_MODE_APSTA, 6); // Initialize mesh
 
   // Set ESP32 802.11 Mode
-  esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11N);
-  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11N);
+  esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_LR);
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR);
 
   // Setup mesh callbacks
   mesh.onReceive(&receivedCallback);

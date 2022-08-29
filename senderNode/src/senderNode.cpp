@@ -157,8 +157,8 @@ void setup(){
     ss.begin(GPSBaud);
     mesh.setDebugMsgTypes( ERROR | STARTUP | CONNECTION);
     mesh.init(MESH_PREFIX, MESH_PASS, MESH_PORT, WIFI_MODE_APSTA, 6);
-    esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11N);
-    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11N);
+    esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_LR);
+    esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_LR);
     mesh.onReceive(&receivedCallback);
     mesh.onNewConnection(&newConnectionCallback);
     mesh.onChangedConnections(&changedConnectionCallback);
